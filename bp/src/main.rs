@@ -134,6 +134,56 @@ impl<'a> Compiler<'a> {
     }
 }
 
+trait VecExt {
+    fn push_(&mut self, s: &str);
+}
+impl VecExt for Vec<String> {
+    fn push_(&mut self, s: &str) {
+        self.push(s.to_owned())
+    }
+}
+
+fn generate_output(file: File) -> String {
+    let mut out = vec![];
+
+    out.push_("#include <stdlib.h>");
+    out.push_("#include <stdint.h>");
+
+    for func in file.funcs {
+        out.push(format!("unit64_t {}() {{", func.name));
+        generate_statement(&mut out, func.body);
+        out.push_("return 0;}");
+    }
+
+    out.join("\n")
+}
+
+fn generate_statement(out: &mut Vec<String>, stmt: Statement) {
+    match stmt {
+        Statement::FunCall(funcall) => {
+            out.push(funcall.name);
+            out.push_("(");
+            for arg in funcall.args {
+                generate_rvalue(out, arg);
+            }
+            out.push_(")");
+        }
+    }
+    out.push_(";");
+}
+
+fn generate_rvalue(out: &mut Vec<String>, val: RValue) {
+    match val {
+        RValue::Constant(con) => generate_constant(out, con),
+    }
+}
+
+fn generate_constant(out: &mut Vec<String>, con: Constant) {
+    match con {
+        Constant::Integer(int) => out.push(int.to_string()),
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let source = read_to_string(&cli.file)?;
@@ -143,7 +193,8 @@ fn main() -> Result<()> {
         lexer: Token::lexer(&source).spanned().peekable(),
     };
     let file = parse_file(&mut c)?;
-    println!("file: {file:#?}");
+    let output = generate_output(file);
+    println!("{output}");
 
     Ok(())
 }
