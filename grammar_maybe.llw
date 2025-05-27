@@ -1,4 +1,5 @@
 token Comma=',' Semi=';' LPar='(' RPar=')'
+      Extern='extern'
       Ident='</[_a-zA-Z][_a-zA-Z0-9]*/>' Integer='<[0-9]+>'
       Whitespace='</[ \\r\\n\\t]+/>'
 ;
@@ -8,9 +9,12 @@ start file;
 
 file: (
   function
+| extern
 )*;
 
 function: Ident '(' ')' statement;
+
+extern: 'extern' Ident ';';
 
 statement: (
   function_call

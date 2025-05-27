@@ -18,6 +18,9 @@ enum Token {
     #[token(")")]
     RPar,
 
+    #[token("extern")]
+    Extern,
+
     #[regex(r"[_a-zA-Z][_a-zA-Z0-9]*")]
     Ident,
     #[regex(r"[0-9]+")]
@@ -31,6 +34,7 @@ struct Cli {
 
 #[derive(Debug)]
 struct File {
+    externs: Vec<String>,
     funcs: Vec<Func>,
 }
 
@@ -62,13 +66,28 @@ enum Constant {
 }
 
 fn parse_file(c: &mut Compiler) -> Result<File> {
-    let mut file = File { funcs: vec![] };
+    let mut file = File {
+        externs: vec![],
+        funcs: vec![],
+    };
 
     while c.lexer.peek().is_some() {
-        file.funcs.push(parse_func(c)?);
+        if let Ok(func) = parse_func(c) {
+            file.funcs.push(func);
+        } else {
+            file.externs.push(parse_extern(c)?);
+        }
     }
 
     Ok(file)
+}
+fn parse_extern(c: &mut Compiler) -> Result<String> {
+    c.expect(Token::Extern)?;
+    let ident = c.expect(Token::Ident)?;
+    let name = c.source[ident.1].to_owned();
+    c.expect(Token::Semi)?;
+
+    Ok(name)
 }
 
 fn parse_func(c: &mut Compiler) -> Result<Func> {
@@ -146,11 +165,14 @@ impl VecExt for Vec<String> {
 fn generate_output(file: File) -> String {
     let mut out = vec![];
 
-    out.push_("#include <stdlib.h>");
-    out.push_("#include <stdint.h>");
+    out.push_("typedef long long WORD;");
+
+    for name in file.externs {
+        out.push(format!("WORD {name}(...);"))
+    }
 
     for func in file.funcs {
-        out.push(format!("unit64_t {}() {{", func.name));
+        out.push(format!("WORD {}() {{", func.name));
         generate_statement(&mut out, func.body);
         out.push_("return 0;}");
     }
