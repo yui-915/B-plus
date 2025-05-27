@@ -1,0 +1,23 @@
+token Comma=',' Semi=';' LPar='(' RPar=')'
+      Ident='</[_a-zA-Z][_a-zA-Z0-9]*/>' Integer='<[0-9]+>'
+      Whitespace='</[ \\r\\n\\t]+/>'
+;
+
+skip Whitespace;
+start file;
+
+file: (
+  function
+)*;
+
+function: Ident '(' ')' statement;
+
+statement: (
+  function_call
+) ';';
+  
+function_call: Ident([rvalue (',' rvalue)]);
+
+rvalue: constant; 
+
+constant: Integer;
