@@ -1,5 +1,5 @@
 token Comma=',' Semi=';' LPar='(' RPar=')' LBrace='{' RBrace='}' ColonEq=':='
-      Extern='extern'
+      Extern='extern' Eq='='
       Ident='</[_a-zA-Z][_a-zA-Z0-9]*/>' Integer='<[0-9]+>'
       Whitespace='</[ \\r\\n\\t]+/>'
 ;
@@ -21,9 +21,11 @@ statement: (
   block
 | function_call
 / var_def
+/ var_assign
 ) ';';
 
 var_def: Ident ':=' rvalue;
+var_assign: Ident '=' rvalue;
 
 block: '{' statement* '}';
   

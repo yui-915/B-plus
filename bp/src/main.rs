@@ -23,6 +23,8 @@ enum Token {
     RBrace,
     #[token(":=")]
     ColonEq,
+    #[token("=")]
+    Eq,
 
     #[token("extern")]
     Extern,
@@ -54,11 +56,18 @@ struct Func {
 enum Statement {
     FunCall(FunCall),
     VarDef(VarDef),
+    VarAssign(VarAssign),
     Block(Vec<Statement>),
 }
 
 #[derive(Debug)]
 struct VarDef {
+    name: String,
+    value: RValue,
+}
+
+#[derive(Debug)]
+struct VarAssign {
     name: String,
     value: RValue,
 }
@@ -119,11 +128,24 @@ fn parse_statement(c: &mut Compiler) -> Result<Statement> {
         Statement::FunCall(funcall)
     } else if let Ok(var_def) = parse_var_def(c) {
         Statement::VarDef(var_def)
+    } else if let Ok(var_assign) = parse_var_assign(c) {
+        Statement::VarAssign(var_assign)
     } else {
         Statement::Block(parse_block(c)?)
     };
     c.expect(Token::Semi)?;
     Ok(result)
+}
+
+fn parse_var_assign(c: &mut Compiler) -> Result<VarAssign> {
+    let ident = c.expect_off(Token::Ident, 0)?;
+    c.expect_off(Token::Eq, 1)?;
+    c.tok_idx += 2;
+
+    let name = c.source[ident.1].to_owned();
+    let value = parse_rvalue(c)?;
+
+    Ok(VarAssign { name, value })
 }
 
 fn parse_var_def(c: &mut Compiler) -> Result<VarDef> {
@@ -265,6 +287,11 @@ fn generate_statement(out: &mut Vec<String>, stmt: Statement) {
             out.push(var_def.name);
             out.push_("=");
             generate_rvalue(out, var_def.value);
+        }
+        Statement::VarAssign(var_assign) => {
+            out.push(var_assign.name);
+            out.push_("=");
+            generate_rvalue(out, var_assign.value);
         }
     }
     out.push_(";");

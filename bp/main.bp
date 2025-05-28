@@ -2,6 +2,8 @@ extern exit; extern putchar;
 main() {
 	A := 69;
 	putchar(A);
-	putchar(10);
-	exit(0);
+	A = 10;
+	putchar(A);
+	A = 0;
+	exit(A);
 };
