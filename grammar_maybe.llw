@@ -1,4 +1,4 @@
-token Comma=',' Semi=';' LPar='(' RPar=')' LBrace='{' RBrace='}'
+token Comma=',' Semi=';' LPar='(' RPar=')' LBrace='{' RBrace='}' ColonEq=':='
       Extern='extern'
       Ident='</[_a-zA-Z][_a-zA-Z0-9]*/>' Integer='<[0-9]+>'
       Whitespace='</[ \\r\\n\\t]+/>'
@@ -13,13 +13,17 @@ file: (
 )*;
 
 function: Ident '(' ')' statement;
-
 extern: 'extern' Ident ';';
 
+
+
 statement: (
-  function_call
-|  block
+  block
+| function_call
+/ var_def
 ) ';';
+
+var_def: Ident ':=' rvalue;
 
 block: '{' statement* '}';
   

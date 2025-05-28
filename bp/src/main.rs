@@ -21,6 +21,8 @@ enum Token {
     LBrace,
     #[token("}")]
     RBrace,
+    #[token(":=")]
+    ColonEq,
 
     #[token("extern")]
     Extern,
@@ -51,7 +53,14 @@ struct Func {
 #[derive(Debug)]
 enum Statement {
     FunCall(FunCall),
+    VarDef(VarDef),
     Block(Vec<Statement>),
+}
+
+#[derive(Debug)]
+struct VarDef {
+    name: String,
+    value: RValue,
 }
 
 #[derive(Debug)]
@@ -62,6 +71,7 @@ struct FunCall {
 
 #[derive(Debug)]
 enum RValue {
+    Variable(String),
     Constant(Constant),
 }
 
@@ -76,7 +86,7 @@ fn parse_file(c: &mut Compiler) -> Result<File> {
         funcs: vec![],
     };
 
-    while c.lexer.peek().is_some() {
+    while c.tok_idx < c.tokens.len() {
         if let Ok(func) = parse_func(c) {
             file.funcs.push(func);
         } else {
@@ -107,11 +117,24 @@ fn parse_func(c: &mut Compiler) -> Result<Func> {
 fn parse_statement(c: &mut Compiler) -> Result<Statement> {
     let result = if let Ok(funcall) = parse_funcall(c) {
         Statement::FunCall(funcall)
+    } else if let Ok(var_def) = parse_var_def(c) {
+        Statement::VarDef(var_def)
     } else {
         Statement::Block(parse_block(c)?)
     };
     c.expect(Token::Semi)?;
     Ok(result)
+}
+
+fn parse_var_def(c: &mut Compiler) -> Result<VarDef> {
+    let ident = c.expect_off(Token::Ident, 0)?;
+    c.expect_off(Token::ColonEq, 1)?;
+    c.tok_idx += 2;
+
+    let name = c.source[ident.1].to_owned();
+    let value = parse_rvalue(c)?;
+
+    Ok(VarDef { name, value })
 }
 
 fn parse_block(c: &mut Compiler) -> Result<Vec<Statement>> {
@@ -127,11 +150,13 @@ fn parse_block(c: &mut Compiler) -> Result<Vec<Statement>> {
 }
 
 fn parse_funcall(c: &mut Compiler) -> Result<FunCall> {
-    let ident = c.expect(Token::Ident)?;
+    let ident = c.expect_off(Token::Ident, 0)?;
+    c.expect_off(Token::LPar, 1)?;
+    c.tok_idx += 2;
+
     let name = c.source[ident.1].to_owned();
     let mut args = vec![];
 
-    c.expect(Token::LPar)?;
     while let Ok(arg) = parse_rvalue(c) {
         args.push(arg);
     }
@@ -141,7 +166,18 @@ fn parse_funcall(c: &mut Compiler) -> Result<FunCall> {
 }
 
 fn parse_rvalue(c: &mut Compiler) -> Result<RValue> {
-    Ok(RValue::Constant(parse_constant(c)?))
+    let result = if let Ok(constant) = parse_constant(c) {
+        RValue::Constant(constant)
+    } else {
+        RValue::Variable(parse_ident(c)?)
+    };
+    Ok(result)
+}
+
+fn parse_ident(c: &mut Compiler) -> Result<String> {
+    let ident = c.expect(Token::Ident)?;
+    let name = c.source[ident.1].to_owned();
+    Ok(name)
 }
 
 fn parse_constant(c: &mut Compiler) -> Result<Constant> {
@@ -150,27 +186,33 @@ fn parse_constant(c: &mut Compiler) -> Result<Constant> {
     Ok(Constant::Integer(int))
 }
 
-struct Compiler<'a> {
+struct Compiler {
     input_path: PathBuf,
     source: String,
-    lexer: Peekable<SpannedIter<'a, Token>>,
+    tokens: Vec<(Result<Token, ()>, Range<usize>)>,
+    tok_idx: usize,
 }
 
-impl<'a> Compiler<'a> {
+impl Compiler {
     #[must_use]
     fn expect(&mut self, tok: Token) -> Result<(Token, Range<usize>)> {
-        let Some((_, span)) = self.lexer.peek() else {
+        let res = self.expect_off(tok, 0)?;
+        self.tok_idx += 1;
+        Ok(res)
+    }
+    fn expect_off(&mut self, tok: Token, offset: usize) -> Result<(Token, Range<usize>)> {
+        let idx = self.tok_idx + offset;
+        if idx >= self.tokens.len() {
             bail!("expected `{:?}` but found `EOF`", tok);
-        };
-        let span = span.clone();
-        let ((Ok(token), _)) = self.lexer.peek().unwrap().clone() else {
+        }
+        let (token, span) = self.tokens[idx].clone();
+        let Ok(token) = token else {
             bail!("expected `{:?}` but found `ERROR` as `{:?}`", tok, span);
         };
         if token != tok {
             bail!("expected `{:?}` but found `{:?}` at {:?}", tok, token, span);
         }
-        self.lexer.next();
-        Ok((token.clone(), span))
+        Ok((token, span))
     }
 }
 
@@ -218,6 +260,12 @@ fn generate_statement(out: &mut Vec<String>, stmt: Statement) {
             }
             out.push_("}");
         }
+        Statement::VarDef(var_def) => {
+            out.push_("WORD");
+            out.push(var_def.name);
+            out.push_("=");
+            generate_rvalue(out, var_def.value);
+        }
     }
     out.push_(";");
 }
@@ -225,6 +273,7 @@ fn generate_statement(out: &mut Vec<String>, stmt: Statement) {
 fn generate_rvalue(out: &mut Vec<String>, val: RValue) {
     match val {
         RValue::Constant(con) => generate_constant(out, con),
+        RValue::Variable(name) => out.push(name),
     }
 }
 
@@ -240,7 +289,8 @@ fn main() -> Result<()> {
     let mut c = Compiler {
         input_path: cli.file,
         source: source.clone(),
-        lexer: Token::lexer(&source).spanned().peekable(),
+        tokens: Token::lexer(&source).spanned().collect(),
+        tok_idx: 0,
     };
     let file = parse_file(&mut c)?;
     let output = generate_output(file);

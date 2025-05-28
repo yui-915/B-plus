@@ -1,7 +1,7 @@
-extern exit;
-extern putchar;
+extern exit; extern putchar;
 main() {
-	putchar(69);
+	A := 69;
+	putchar(A);
 	putchar(10);
 	exit(0);
 };
