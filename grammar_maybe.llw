@@ -1,4 +1,4 @@
-token Comma=',' Semi=';' LPar='(' RPar=')'
+token Comma=',' Semi=';' LPar='(' RPar=')' LBrace='{' RBrace='}'
       Extern='extern'
       Ident='</[_a-zA-Z][_a-zA-Z0-9]*/>' Integer='<[0-9]+>'
       Whitespace='</[ \\r\\n\\t]+/>'
@@ -18,7 +18,10 @@ extern: 'extern' Ident ';';
 
 statement: (
   function_call
+|  block
 ) ';';
+
+block: '{' statement* '}';
   
 function_call: Ident([rvalue (',' rvalue)]);
 

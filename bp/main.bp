@@ -1,2 +1,7 @@
 extern exit;
-main() exit(0);
+extern putchar;
+main() {
+	putchar(69);
+	putchar(10);
+	exit(0);
+};

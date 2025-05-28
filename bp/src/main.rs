@@ -17,6 +17,10 @@ enum Token {
     LPar,
     #[token(")")]
     RPar,
+    #[token("{")]
+    LBrace,
+    #[token("}")]
+    RBrace,
 
     #[token("extern")]
     Extern,
@@ -47,6 +51,7 @@ struct Func {
 #[derive(Debug)]
 enum Statement {
     FunCall(FunCall),
+    Block(Vec<Statement>),
 }
 
 #[derive(Debug)]
@@ -100,9 +105,25 @@ fn parse_func(c: &mut Compiler) -> Result<Func> {
 }
 
 fn parse_statement(c: &mut Compiler) -> Result<Statement> {
-    let funcall = Statement::FunCall(parse_funcall(c)?);
+    let result = if let Ok(funcall) = parse_funcall(c) {
+        Statement::FunCall(funcall)
+    } else {
+        Statement::Block(parse_block(c)?)
+    };
     c.expect(Token::Semi)?;
-    Ok(funcall)
+    Ok(result)
+}
+
+fn parse_block(c: &mut Compiler) -> Result<Vec<Statement>> {
+    let mut stmts = vec![];
+
+    c.expect(Token::LBrace)?;
+    while let Ok(stmt) = parse_statement(c) {
+        stmts.push(stmt);
+    }
+    c.expect(Token::RBrace)?;
+
+    Ok(stmts)
 }
 
 fn parse_funcall(c: &mut Compiler) -> Result<FunCall> {
@@ -189,6 +210,13 @@ fn generate_statement(out: &mut Vec<String>, stmt: Statement) {
                 generate_rvalue(out, arg);
             }
             out.push_(")");
+        }
+        Statement::Block(stmts) => {
+            out.push_("{");
+            for stmt in stmts {
+                generate_statement(out, stmt);
+            }
+            out.push_("}");
         }
     }
     out.push_(";");
