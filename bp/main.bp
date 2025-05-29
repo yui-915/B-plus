@@ -1,9 +1,0 @@
-extern exit; extern putchar;
-main() {
-	A := 69;
-	putchar(A);
-	A = 10;
-	putchar(A);
-	A = 0;
-	exit(A);
-};
