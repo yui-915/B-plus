@@ -1,5 +1,0 @@
-{
-  "tasks": {
-    "dev": "find *.ts *.bp | entr -r zsh -c 'clear && deno run --allow-all main.ts'"
-  }
-}
