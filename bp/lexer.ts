@@ -2,22 +2,24 @@ import { Iter } from "./iter.ts";
 import { panic } from "./util.ts";
 
 export enum Symbol {
+  Plus = "+",
+  Star = "*",
   LPar = "(",
   RPar = ")",
-  LBrace = "{",
-  RBrace = "}",
-  ColonEq = ":=",
-  EqEq = "==",
-  Semi = ";",
+  // LBrace = "{",
+  // RBrace = "}",
+  // ColonEq = ":=",
+  // EqEq = "==",
+  // Semi = ";",
 }
 
 export enum Keyword {
-  if = "if",
+  // if = "if",
 }
 
 export type TokenType = Symbol | Keyword | "number" | "ident";
 
-function where(input_path: string, line: number, offset: number) {
+export function where(input_path: string, line: number, offset: number) {
   return `${input_path}:${line}:${offset}`;
 }
 
