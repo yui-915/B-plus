@@ -78,17 +78,26 @@ impl Iter<char> {
     }
 }
 
-#[derive(PartialEq, Clone, Debug, Copy)]
-pub struct Token {
-    pub line: usize,
-    pub column: usize,
-    pub len: usize,
-    pub kind: TokenKind,
+#[derive(PartialEq, Clone, Debug)]
+struct Token {
+    input_path: String,
+    line: usize,
+    column: usize,
+    len: usize,
+    kind: TokenKind,
 }
 
 impl Token {
-    fn new(i: &Iter<char>, start: usize, line: usize, line_start: usize, kind: TokenKind) -> Token {
+    fn new(
+        i: &Iter<char>,
+        input_path: &str,
+        start: usize,
+        line: usize,
+        line_start: usize,
+        kind: TokenKind,
+    ) -> Token {
         Token {
+            input_path: input_path.to_owned(),
             line,
             column: i.idx - line_start,
             len: i.idx - start,
@@ -98,12 +107,14 @@ impl Token {
 
     fn new_(
         i: &Iter<char>,
+        input_path: &str,
         start: usize,
         line: usize,
         line_start: usize,
         kind: Option<TokenKind>,
     ) -> Token {
         Token {
+            input_path: input_path.to_owned(),
             line,
             column: i.idx - line_start,
             len: i.idx - start,
@@ -111,17 +122,17 @@ impl Token {
         }
     }
 
-    fn loc(&self, input_path: &str) -> String {
-        format!("{}:{}:{}: ", input_path, self.line, self.column)
+    fn loc(&self) -> String {
+        format!("{}:{}:{}: ", self.input_path, self.line, self.column)
     }
 
-    fn string(&self, input_path: &str) -> String {
-        format!("{}{:#?}", self.loc(input_path), self.kind)
+    fn loc_string(&self) -> String {
+        format!("{}{:#?}", self.loc(), self.kind)
     }
 }
 
 #[derive(PartialEq, Clone, Debug, Copy)]
-pub enum TokenKind {
+enum TokenKind {
     LPar,
     RPar,
     Semi,
@@ -133,6 +144,7 @@ pub enum TokenKind {
     If,
     Else,
     While,
+    Eof,
 }
 
 const SYMBOLS: &[(&str, TokenKind)] = &[
@@ -166,8 +178,8 @@ fn is_num(c: char) -> bool {
 }
 
 macro_rules! diag {
-    ($token:expr, $input_path:expr, $($fmt:tt)*) => {
-        eprint!("{}", $token.loc($input_path));
+    ($token:expr, $($fmt:tt)*) => {
+        eprint!("{}", $token.loc());
         eprintln!($($fmt)*);
     };
 }
@@ -201,11 +213,11 @@ fn tokenize(source: &str, input_path: &str) -> Vec<Token> {
 
         if !is_alphanum(c) {
             let Some(&(str, kind)) = symbols.iter().find(|&(k, _)| imatch(&i, k.chars())) else {
-                let token = Token::new_(&i, start, line, line_start, None);
-                diag!(token, input_path, "Unknown symbol `{}`", c);
+                let token = Token::new_(&i, input_path, start, line, line_start, None);
+                diag!(token, "Unknown symbol `{}`", c);
                 exit(1);
             };
-            let token = Token::new(&i, start, line, line_start, kind);
+            let token = Token::new(&i, input_path, start, line, line_start, kind);
             i.back();
             i.idx += str.len();
             tokens.push(token);
@@ -219,7 +231,7 @@ fn tokenize(source: &str, input_path: &str) -> Vec<Token> {
                 .iter()
                 .find_map(|&(k, v)| (k == str).then(|| v))
                 .unwrap_or(TokenKind::Ident);
-            let token = Token::new(&i, start, line, line_start, kind);
+            let token = Token::new(&i, input_path, start, line, line_start, kind);
             tokens.push(token);
             continue;
         }
@@ -230,27 +242,72 @@ fn tokenize(source: &str, input_path: &str) -> Vec<Token> {
 
         i.back();
         i.str_take_while(is_num);
-        let token = Token::new(&i, start, line, line_start, TokenKind::Integer);
+        let token = Token::new(&i, input_path, start, line, line_start, TokenKind::Integer);
         tokens.push(token);
 
         if let Some(c) = i.peek()
             && is_alpha(c)
         {
-            let token = Token::new(&i, start, line, line_start, TokenKind::Error);
-            diag!(token, input_path, "Unexpected char after integer `{}`", c);
+            let token = Token::new(&i, input_path, start, line, line_start, TokenKind::Error);
+            diag!(token, "Unexpected char after integer `{}`", c);
             exit(1);
         }
     }
+
+    i.idx += 1;
+    tokens.push(Token::new(
+        &i,
+        input_path,
+        i.idx - 1,
+        line,
+        line_start,
+        TokenKind::Eof,
+    ));
+
     tokens
+}
+
+impl Expr {
+    fn string(&self) -> String {
+        todo!()
+    }
+}
+
+enum Expr {
+    Atom(Value),
+    Infix(Infix, Box<(Expr, Expr)>),
+}
+
+enum Infix {
+    Add,
+    Mul,
+}
+
+enum Value {
+    Integer(u64),
+}
+
+fn parse_value(t: Token) -> Value {
+    todo!()
+}
+
+fn parse_expr(i: &mut Iter<Token>) -> Expr {
+    let t = i.next();
+    let value = parse_value(t);
+    todo!()
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let input_path = "main.bp";
     let source = read_to_string(input_path)?;
     let tokens = tokenize(&source, input_path);
+
     for token in &tokens {
-        println!("{}", token.string(input_path));
+        println!("{}", token.loc_string());
     }
+
+    let expr = parse_expr(&mut Iter::new(tokens));
+    println!("{}", expr.string());
 
     Ok(())
 }
