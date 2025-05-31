@@ -397,14 +397,23 @@ fn infix_bp(i: Infix) -> (f32, f32) {
     }
 }
 
-fn parse_expr(c: &mut Compiler, bp: f32) -> Expr {
-    let mut lhs = parse_value(c.tokens.next(), c);
+fn parse_expr(c: &mut Compiler, bp: f32, end: TokenKind) -> Expr {
+    let t = c.tokens.next();
+    let mut lhs = match t.kind {
+        TokenKind::LPar => {
+            let lhs = parse_expr(c, 0., TokenKind::RPar);
+            c.tokens.next();
+            lhs
+        }
+        _ => parse_value(t, c),
+    };
 
     loop {
         // TODO: no unwrap
+        // TODO: match parens at lex level
         let t = c.tokens.peek().unwrap();
         let infix = match t.kind {
-            TokenKind::Eof => break,
+            k if k == end => break,
             _ => parse_infix(t, c),
         };
         let (l_bp, r_bp) = infix_bp(infix);
@@ -412,7 +421,7 @@ fn parse_expr(c: &mut Compiler, bp: f32) -> Expr {
             break;
         }
         c.tokens.next();
-        let rhs = parse_expr(c, r_bp);
+        let rhs = parse_expr(c, r_bp, end);
         lhs = Expr::Infix(infix, (lhs, rhs).boxed());
     }
 
@@ -438,7 +447,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         source,
     };
 
-    let expr = parse_expr(&mut compiler, 0.);
+    let expr = parse_expr(&mut compiler, 0., TokenKind::Eof);
     println!("{}", expr.string());
 
     Ok(())

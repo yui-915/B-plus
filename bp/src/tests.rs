@@ -8,7 +8,7 @@ fn test_parse_expr() {
             tokens: Iter::new(tokens),
             source: input.to_owned(),
         };
-        let expr = parse_expr(&mut c, 0.);
+        let expr = parse_expr(&mut c, 0., TokenKind::Eof);
         let str = expr.string();
         if str != expected {
             eprintln!("parse_expr test failed!");
