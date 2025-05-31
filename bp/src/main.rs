@@ -187,6 +187,16 @@ macro_rules! gen_token_kind {
             }
         }
 
+        impl TokenKind {
+            fn to_raw_string(&self) -> String {
+                match self {
+                    $(TokenKind::$symbol => $symbol_str,)*
+                    $(TokenKind::$keyword => $keyword_str,)*
+                    $(TokenKind::$other => $other_str,)*
+                }.to_owned()
+            }
+        }
+
         const SYMBOLS: &[(&str, TokenKind)] = &[$(
             ($symbol_str, TokenKind::$symbol),
         )*];
@@ -248,11 +258,23 @@ gen_token_kind! {
 
 macro_rules! gen_parser_helpers {
     {
-        infix {$( $infix_token_kind:ident => $infix:ident,  )*}
+        infix   {$( $infix_token_kind:ident   => $infix:ident,   )*}
+        prefix  {$( $prefix_token_kind:ident  => $prefix:ident,  )*}
+        postfix {$( $postfix_token_kind:ident => $postfix:ident, )*}
     } => {
         #[derive(Clone, Copy, Debug, PartialEq)]
         enum Infix {
             $($infix,)*
+        }
+
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        enum Prefix {
+            $($prefix,)*
+        }
+
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        enum Postfix {
+            $($postfix,)*
         }
 
         impl Display for Infix {
@@ -260,7 +282,25 @@ macro_rules! gen_parser_helpers {
                 let t = match self {
                     $(Infix::$infix => TokenKind::$infix_token_kind,)*
                 };
-                write!(f, "{t}")
+                write!(f, "{}", t.to_raw_string())
+            }
+        }
+
+        impl Display for Prefix {
+            fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+                let t = match self {
+                    $(Prefix::$prefix => TokenKind::$prefix_token_kind,)*
+                };
+                write!(f, "{}", t.to_raw_string())
+            }
+        }
+
+        impl Display for Postfix {
+            fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+                let t = match self {
+                    $(Postfix::$postfix => TokenKind::$postfix_token_kind,)*
+                };
+                write!(f, "{}", t.to_raw_string())
             }
         }
 
@@ -270,11 +310,26 @@ macro_rules! gen_parser_helpers {
                 _ => {
                     diag!(
                         t,
-                        "Unexpected token `{:?}` while trying to parse infix",
+                        "Unexpected token {} while trying to parse infix",
                         t.kind
                     );
                     panic!();
                 }
+            }
+        }
+
+        fn try_parse_prefix<T: Borrow<Token>>(t: T, _c: &mut Compiler) -> Option<Prefix> {
+            match t.borrow().kind {
+                $(TokenKind::$prefix_token_kind => Some(Prefix::$prefix),)*
+                _ => None,
+            }
+        }
+
+
+        fn try_parse_postfix<T: Borrow<Token>>(t: T, _c: &mut Compiler) -> Option<Postfix> {
+            match t.borrow().kind {
+                $(TokenKind::$postfix_token_kind => Some(Postfix::$postfix),)*
+                _ => None,
             }
         }
     };
@@ -285,6 +340,13 @@ gen_parser_helpers! {
         Plus  => Add,
         Star  => Mul,
         Minus => Sub,
+    }
+    prefix {
+        Minus    => Negate,
+        PlusPlus => Increment,
+    }
+    postfix {
+        PlusPlus => Increment,
     }
 }
 
@@ -397,34 +459,11 @@ impl Display for Value {
     }
 }
 
-impl Display for Prefix {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Prefix::Negate => write!(f, "-"),
-            Prefix::Increment => write!(f, "++"),
-        }
-    }
-}
-
-impl Display for Postfix {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Postfix::Increment => write!(f, "++"),
-        }
-    }
-}
-
 impl Display for Expr {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Expr::Atom(value) => write!(f, "{value}"),
-            Expr::Infix(infix, operands) => write!(
-                f,
-                "({} {} {})",
-                infix.to_string().trim_matches('`'), // TODO: this is a hack
-                operands.0,
-                operands.1,
-            ),
+            Expr::Infix(infix, operands) => write!(f, "({} {} {})", infix, operands.0, operands.1,),
             Expr::Prefix(prefix, operand) => write!(f, "({} {})", prefix, operand,),
             Expr::Postfix(postfix, operand) => write!(f, "({} {})", postfix, operand,),
             Expr::Index(operands) => write!(f, "([ {} {})", operands.0, operands.1),
@@ -442,58 +481,31 @@ enum Expr {
     FunCall(Box<(Expr, Expr)>),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Prefix {
-    Negate,
-    Increment,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Postfix {
-    Increment,
-}
-
 enum Value {
     Integer(u64),
 }
 
 fn parse_value(t: Token, c: &mut Compiler) -> Expr {
     // TODO: ident
-    // TODO: no unwrap
-    // TODO: automate using macro
+
     let value = match t.kind {
-        TokenKind::Integer => Value::Integer(t.str(c).parse().unwrap()),
+        TokenKind::Integer => match t.str(c).parse() {
+            Ok(int) => Value::Integer(int),
+            Err(err) => {
+                diag!(t, "Error while parsing number: {err}");
+                panic!();
+            }
+        },
         _ => {
-            diag!(
-                t,
-                "Unexpected token `{:?}` while trying to parse value",
-                t.kind
-            );
+            diag!(t, "Unexpected token {} while trying to parse value", t.kind);
             panic!();
-            // exit(1);
         }
     };
 
     Expr::Atom(value)
 }
 
-fn try_parse_prefix<T: Borrow<Token>>(t: T, _c: &mut Compiler) -> Option<Prefix> {
-    // TODO: automate using macro
-    match t.borrow().kind {
-        TokenKind::Minus => Some(Prefix::Negate),
-        TokenKind::PlusPlus => Some(Prefix::Increment),
-        _ => None,
-    }
-}
-
-fn try_parse_postfix<T: Borrow<Token>>(t: T, _c: &mut Compiler) -> Option<Postfix> {
-    // TODO: automate using macro
-    match t.borrow().kind {
-        TokenKind::PlusPlus => Some(Postfix::Increment),
-        _ => None,
-    }
-}
-
+// TODO: automate using macro
 fn infix_bp(i: Infix) -> (f32, f32) {
     use Infix::*;
     match i {
@@ -505,20 +517,17 @@ const PREFIX_BP: f32 = 3.;
 
 fn parse_expr(c: &mut Compiler, bp: f32, end: TokenKind) -> Expr {
     let t = c.tokens.next();
-    let mut lhs = match t.kind {
-        TokenKind::LPar => {
-            let lhs = parse_expr(c, 0., TokenKind::RPar);
-            c.tokens.next();
-            lhs
-        }
-        _ if try_parse_prefix(&t, c).is_some() => {
-            // TODO: no unwrap
-            let prefix = try_parse_prefix(t, c).unwrap();
-            let operand = parse_expr(c, PREFIX_BP, end);
-            Expr::Prefix(prefix, operand.boxed())
-        }
-        _ => parse_value(t, c),
-    };
+    let mut lhs;
+
+    if t.kind == TokenKind::LPar {
+        lhs = parse_expr(c, 0., TokenKind::RPar);
+        c.tokens.next();
+    } else if let Some(prefix) = try_parse_prefix(&t, c) {
+        let operand = parse_expr(c, PREFIX_BP, end);
+        lhs = Expr::Prefix(prefix, operand.boxed());
+    } else {
+        lhs = parse_value(t, c);
+    }
 
     loop {
         // TODO: no unwrap

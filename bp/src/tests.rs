@@ -9,7 +9,7 @@ fn test_parse_expr() {
             source: input.to_owned(),
         };
         let expr = parse_expr(&mut c, 0., TokenKind::Eof);
-        let str = expr.string();
+        let str = expr.to_string();
         if str != expected {
             eprintln!("parse_expr test failed!");
             eprintln!("while parsing: `{}`", input);
