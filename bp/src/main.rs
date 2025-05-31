@@ -398,7 +398,6 @@ fn tokenize(source: &str, input_path: &str) -> Vec<Token> {
                 let token = Token::new_(&i, input_path, start, line, line_start, None);
                 diag!(token, "Unknown symbol `{}`", c);
                 panic!();
-                // exit(1);
             };
             let token = Token::new(&i, input_path, start, line, line_start, kind);
             i.back();
@@ -434,7 +433,6 @@ fn tokenize(source: &str, input_path: &str) -> Vec<Token> {
             let token = Token::new(&i, input_path, start, line, line_start, TokenKind::Error);
             diag!(token, "Unexpected char after integer `{}`", c);
             panic!();
-            // exit(1);
         }
     }
 
@@ -530,41 +528,33 @@ fn parse_expr(c: &mut Compiler, bp: f32, end: TokenKind) -> Expr {
     }
 
     loop {
-        // TODO: no unwrap
         // TODO: match parens at lex level
         let t = c.tokens.peek().unwrap();
-        let infix = match t.kind {
-            k if k == end => break,
-            TokenKind::LBrak => {
-                c.tokens.next();
-                let rhs = parse_expr(c, 0., TokenKind::RBrak);
-                c.tokens.next();
-                lhs = Expr::Index((lhs, rhs).boxed());
-                continue;
-            }
-            TokenKind::LPar => {
-                c.tokens.next();
-                let rhs = parse_expr(c, 0., TokenKind::RPar);
-                c.tokens.next();
-                lhs = Expr::FunCall((lhs, rhs).boxed());
-                continue;
-            }
-            _ if try_parse_postfix(&t, c).is_some() => {
-                // TODO: no unwrap
-                let postfix = try_parse_postfix(&t, c).unwrap();
-                c.tokens.next();
-                lhs = Expr::Postfix(postfix, lhs.boxed());
-                continue;
-            }
-            _ => parse_infix(t, c),
-        };
-        let (l_bp, r_bp) = infix_bp(infix);
-        if l_bp < bp {
+        if t.kind == end {
             break;
+        } else if t.kind == TokenKind::LBrak {
+            c.tokens.next();
+            let rhs = parse_expr(c, 0., TokenKind::RBrak);
+            c.tokens.next();
+            lhs = Expr::Index((lhs, rhs).boxed());
+        } else if t.kind == TokenKind::LPar {
+            c.tokens.next();
+            let rhs = parse_expr(c, 0., TokenKind::RPar);
+            c.tokens.next();
+            lhs = Expr::FunCall((lhs, rhs).boxed());
+        } else if let Some(postfix) = try_parse_postfix(&t, c) {
+            c.tokens.next();
+            lhs = Expr::Postfix(postfix, lhs.boxed());
+        } else {
+            let infix = parse_infix(t, c);
+            let (l_bp, r_bp) = infix_bp(infix);
+            if l_bp < bp {
+                break;
+            }
+            c.tokens.next();
+            let rhs = parse_expr(c, r_bp, end);
+            lhs = Expr::Infix(infix, (lhs, rhs).boxed());
         }
-        c.tokens.next();
-        let rhs = parse_expr(c, r_bp, end);
-        lhs = Expr::Infix(infix, (lhs, rhs).boxed());
     }
 
     lhs
