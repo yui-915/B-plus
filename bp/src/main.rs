@@ -232,9 +232,8 @@ gen_token_kind! {
 
         Question "?" Colon ":"
 
-        Comma ","
-        Semi  ";"
-        Eq    "="
+        Comma   ","  Semi  ";"
+        ColonEq ":=" Eq    "="
 
         PlusEq "+=" MinusEq "-="  StarEq "*="   DivEq "/=" PrecentEq "%="
         ShlEq "<<=" ShrEq   ">>=" SarEq  ">>>="
@@ -304,7 +303,8 @@ macro_rules! gen_parser_helpers {
             }
         }
 
-        fn parse_infix(t: Token, _c: &mut Compiler) -> Infix {
+        fn parse_infix<T: Borrow<Token>>(t: T, _c: &mut Compiler) -> Infix {
+            let t = t.borrow();
             match t.kind {
                 $(TokenKind::$infix_token_kind => Infix::$infix,)*
                 _ => {
@@ -337,13 +337,17 @@ macro_rules! gen_parser_helpers {
 
 gen_parser_helpers! {
     infix {
-        Plus  => Add,
-        Star  => Mul,
-        Minus => Sub,
+        Plus     => Add,
+        Star     => Mul,
+        Minus    => Sub,
+        Eq       => Assign,
+        ColonEq  => Define,
     }
     prefix {
-        Minus    => Negate,
-        PlusPlus => Increment,
+        Minus      => Negate,
+        PlusPlus   => Increment,
+        MinusMinus => Decrement,
+        Star       => Deref,
     }
     postfix {
         PlusPlus => Increment,
@@ -453,6 +457,7 @@ impl Display for Value {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Value::Integer(int) => write!(f, "{int}"),
+            Value::Ident(name) => write!(f, "{name}"),
         }
     }
 }
@@ -491,26 +496,26 @@ enum Expr {
 
 enum Value {
     Integer(u64),
+    Ident(String),
 }
 
-fn parse_value(t: Token, c: &mut Compiler) -> Expr {
-    // TODO: ident
-
-    let value = match t.kind {
+fn parse_value(t: Token, c: &mut Compiler) -> (Expr, bool) {
+    let (value, lvalue) = match t.kind {
         TokenKind::Integer => match t.str(c).parse() {
-            Ok(int) => Value::Integer(int),
+            Ok(int) => (Value::Integer(int), false),
             Err(err) => {
                 diag!(t, "Error while parsing number: {err}");
                 panic!();
             }
         },
+        TokenKind::Ident => (Value::Ident(t.str(c)), true),
         _ => {
             diag!(t, "Unexpected token {} while trying to parse value", t.kind);
             panic!();
         }
     };
 
-    Expr::Atom(value)
+    (Expr::Atom(value), lvalue)
 }
 
 // TODO: automate using macro
@@ -519,22 +524,29 @@ fn infix_bp(i: Infix) -> (f32, f32) {
     match i {
         Add | Sub => (1., 1.1),
         Mul => (2., 2.1),
+        Assign | Define => (3.1, 3.),
     }
 }
 const PREFIX_BP: f32 = 3.;
 
-fn parse_expr(c: &mut Compiler, bp: f32, end: &[TokenKind]) -> Expr {
+fn parse_expr(c: &mut Compiler, bp: f32, end: &[TokenKind]) -> (Expr, bool) {
     let t = c.tokens.next();
-    let mut lhs;
+    let (mut lhs, mut lvalue): (Expr, bool);
 
     if t.kind == TokenKind::LPar {
-        lhs = parse_expr(c, 0., &[TokenKind::RPar]);
+        (lhs, _) = parse_expr(c, 0., &[TokenKind::RPar]);
+        lvalue = false;
         c.tokens.next();
     } else if let Some(prefix) = try_parse_prefix(&t, c) {
-        let operand = parse_expr(c, PREFIX_BP, end);
+        let (operand, is_lvalue) = parse_expr(c, PREFIX_BP, end);
+        if !is_lvalue && matches!(prefix, Prefix::Increment | Prefix::Decrement) {
+            diag!(t, "Cannot modify an rvalue");
+            panic!();
+        }
         lhs = Expr::Prefix(prefix, operand.boxed());
+        lvalue = prefix == Prefix::Deref;
     } else {
-        lhs = parse_value(t, c);
+        (lhs, lvalue) = parse_value(t, c);
     }
 
     loop {
@@ -544,35 +556,44 @@ fn parse_expr(c: &mut Compiler, bp: f32, end: &[TokenKind]) -> Expr {
             break;
         } else if t.kind == TokenKind::LBrak {
             c.tokens.next();
-            let rhs = parse_expr(c, 0., &[TokenKind::RBrak]);
+            let (rhs, _) = parse_expr(c, 0., &[TokenKind::RBrak]);
             c.tokens.next();
             lhs = Expr::Index((lhs, rhs).boxed());
+            lvalue = true;
         } else if t.kind == TokenKind::LPar {
             c.tokens.next();
             let mut args = vec![];
             loop {
-                args.push(parse_expr(c, 0., &[TokenKind::RPar, TokenKind::Comma]));
+                let (arg, _) = parse_expr(c, 0., &[TokenKind::RPar, TokenKind::Comma]);
+                args.push(arg);
                 if c.tokens.next().kind == TokenKind::RPar {
                     break;
                 }
             }
             lhs = Expr::FunCall(lhs.boxed(), args);
+            lvalue = false;
         } else if let Some(postfix) = try_parse_postfix(&t, c) {
             c.tokens.next();
             lhs = Expr::Postfix(postfix, lhs.boxed());
+            lvalue = false;
         } else {
-            let infix = parse_infix(t, c);
+            let infix = parse_infix(&t, c);
             let (l_bp, r_bp) = infix_bp(infix);
             if l_bp < bp {
                 break;
             }
             c.tokens.next();
-            let rhs = parse_expr(c, r_bp, end);
+            let (rhs, is_lvalue) = parse_expr(c, r_bp, end);
+            if !lvalue && matches!(infix, Infix::Assign | Infix::Define) {
+                diag!(t, "Cannot modify an rvalue");
+                panic!();
+            }
             lhs = Expr::Infix(infix, (lhs, rhs).boxed());
+            lvalue = matches!(infix, Infix::Assign | Infix::Define) && is_lvalue;
         }
     }
 
-    lhs
+    (lhs, lvalue)
 }
 
 struct Compiler {
@@ -594,8 +615,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         source,
     };
 
-    let expr = parse_expr(&mut compiler, 0., &[TokenKind::Eof]);
-    println!("{}", expr);
+    let (expr, lvalue) = parse_expr(&mut compiler, 0., &[TokenKind::Eof]);
+    println!("{lvalue:#?} {expr}");
 
     Ok(())
 }
