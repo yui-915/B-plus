@@ -1,11 +1,24 @@
 #![allow(dead_code)]
 
-use std::{error::Error, fs::read_to_string, process::exit};
+use std::{error::Error, fs::read_to_string};
+
+#[cfg(test)]
+mod tests;
 
 struct Iter<T> {
     items: Vec<T>,
     idx: usize,
     stack: Vec<usize>,
+}
+
+trait Boxed<T> {
+    fn boxed(self) -> Box<T>;
+}
+
+impl<T> Boxed<T> for T {
+    fn boxed(self) -> Box<T> {
+        Box::new(self)
+    }
 }
 
 impl<T: Clone> Iter<T> {
@@ -83,6 +96,7 @@ struct Token {
     input_path: String,
     line: usize,
     column: usize,
+    start: usize,
     len: usize,
     kind: TokenKind,
 }
@@ -100,6 +114,7 @@ impl Token {
             input_path: input_path.to_owned(),
             line,
             column: i.idx - line_start,
+            start,
             len: i.idx - start,
             kind,
         }
@@ -117,6 +132,7 @@ impl Token {
             input_path: input_path.to_owned(),
             line,
             column: i.idx - line_start,
+            start,
             len: i.idx - start,
             kind: kind.unwrap_or(TokenKind::Error),
         }
@@ -129,37 +145,56 @@ impl Token {
     fn loc_string(&self) -> String {
         format!("{}{:#?}", self.loc(), self.kind)
     }
+
+    fn str(&self, c: &Compiler) -> String {
+        c.source[self.start..self.start + self.len].to_owned()
+    }
 }
 
-#[derive(PartialEq, Clone, Debug, Copy)]
-enum TokenKind {
-    LPar,
-    RPar,
-    Semi,
-    Eq,
-    EqEq,
-    Ident,
-    Integer,
-    Error,
-    If,
-    Else,
-    While,
-    Eof,
+macro_rules! gen_token_kind {
+    {
+        symbols  {$( $symbol:ident  $symbol_str:literal  )*}
+        keywords {$( $keyword:ident $keyword_str:literal )*}
+        other    {$( $other:ident                        )*}
+    } => {
+        #[derive(PartialEq, Clone, Debug, Copy)]
+        pub enum TokenKind {
+            $($symbol,)*
+            $($keyword,)*
+            $($other,)*
+        }
+        const SYMBOLS: &[(&str, TokenKind)] = &[$(
+            ($symbol_str, TokenKind::$symbol),
+        )*];
+
+        const KEYWORDS: &[(&str, TokenKind)] = &[$(
+            ($keyword_str, TokenKind::$keyword),
+        )*];
+    };
 }
 
-const SYMBOLS: &[(&str, TokenKind)] = &[
-    ("(", TokenKind::LPar),
-    (")", TokenKind::RPar),
-    (";", TokenKind::Semi),
-    ("=", TokenKind::Eq),
-    ("==", TokenKind::EqEq),
-];
-
-const KEYWORDS: &[(&str, TokenKind)] = &[
-    ("if", TokenKind::If),
-    ("else", TokenKind::Else),
-    ("while", TokenKind::While),
-];
+gen_token_kind! {
+    symbols {
+        LPar "("
+        RPar ")"
+        Semi ";"
+        Eq   "="
+        EqEq "=="
+        Plus "+"
+        Star "*"
+    }
+    keywords {
+        If    "if"
+        Else  "else"
+        While "while"
+    }
+    other {
+        Ident
+        Integer
+        Error
+        Eof
+    }
+}
 
 fn is_space(c: char) -> bool {
     c == '\r' || c == ' ' || c == '\t'
@@ -215,7 +250,8 @@ fn tokenize(source: &str, input_path: &str) -> Vec<Token> {
             let Some(&(str, kind)) = symbols.iter().find(|&(k, _)| imatch(&i, k.chars())) else {
                 let token = Token::new_(&i, input_path, start, line, line_start, None);
                 diag!(token, "Unknown symbol `{}`", c);
-                exit(1);
+                panic!();
+                // exit(1);
             };
             let token = Token::new(&i, input_path, start, line, line_start, kind);
             i.back();
@@ -250,7 +286,8 @@ fn tokenize(source: &str, input_path: &str) -> Vec<Token> {
         {
             let token = Token::new(&i, input_path, start, line, line_start, TokenKind::Error);
             diag!(token, "Unexpected char after integer `{}`", c);
-            exit(1);
+            panic!();
+            // exit(1);
         }
     }
 
@@ -267,9 +304,37 @@ fn tokenize(source: &str, input_path: &str) -> Vec<Token> {
     tokens
 }
 
+impl Value {
+    fn string(&self) -> String {
+        match self {
+            Value::Integer(int) => format!("{int}"),
+        }
+    }
+}
+
+impl Infix {
+    fn string(&self) -> String {
+        match self {
+            Infix::Add => "+",
+            Infix::Mul => "*",
+        }
+        .to_owned()
+    }
+}
+
 impl Expr {
     fn string(&self) -> String {
-        todo!()
+        match self {
+            Expr::Atom(value) => value.string(),
+            Expr::Infix(infix, operands) => {
+                format!(
+                    "({} {} {})",
+                    infix.string(),
+                    operands.0.string(),
+                    operands.1.string()
+                )
+            }
+        }
     }
 }
 
@@ -278,6 +343,7 @@ enum Expr {
     Infix(Infix, Box<(Expr, Expr)>),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Infix {
     Add,
     Mul,
@@ -287,26 +353,92 @@ enum Value {
     Integer(u64),
 }
 
-fn parse_value(t: Token) -> Value {
-    todo!()
+fn parse_value(t: Token, c: &mut Compiler) -> Expr {
+    // TODO: ident
+    // TODO: no unwrap
+    // TODO: automate using macro
+    let value = match t.kind {
+        TokenKind::Integer => Value::Integer(t.str(c).parse().unwrap()),
+        _ => {
+            diag!(
+                t,
+                "Unexpected token `{:?}` while trying to parse value",
+                t.kind
+            );
+            panic!();
+            // exit(1);
+        }
+    };
+
+    Expr::Atom(value)
 }
 
-fn parse_expr(i: &mut Iter<Token>) -> Expr {
-    let t = i.next();
-    let value = parse_value(t);
-    todo!()
+fn parse_infix(t: Token, _c: &mut Compiler) -> Infix {
+    // TODO: automate using macro
+    match t.kind {
+        TokenKind::Plus => Infix::Add,
+        TokenKind::Star => Infix::Mul,
+        _ => {
+            diag!(
+                t,
+                "Unexpected token `{:?}` while trying to parse infix",
+                t.kind
+            );
+            panic!();
+            // exit(1);
+        }
+    }
+}
+
+fn infix_bp(i: Infix) -> (f32, f32) {
+    match i {
+        Infix::Add => (1., 1.1),
+        Infix::Mul => (2., 2.1),
+    }
+}
+
+fn parse_expr(c: &mut Compiler, bp: f32) -> Expr {
+    let mut lhs = parse_value(c.tokens.next(), c);
+
+    loop {
+        // TODO: no unwrap
+        let t = c.tokens.peek().unwrap();
+        let infix = match t.kind {
+            TokenKind::Eof => break,
+            _ => parse_infix(t, c),
+        };
+        let (l_bp, r_bp) = infix_bp(infix);
+        if l_bp < bp {
+            break;
+        }
+        c.tokens.next();
+        let rhs = parse_expr(c, r_bp);
+        lhs = Expr::Infix(infix, (lhs, rhs).boxed());
+    }
+
+    lhs
+}
+
+struct Compiler {
+    tokens: Iter<Token>,
+    source: String,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let input_path = "main.bp";
     let source = read_to_string(input_path)?;
-    let tokens = tokenize(&source, input_path);
+    let tokens = tokenize(&source.trim_end(), input_path);
 
     for token in &tokens {
         println!("{}", token.loc_string());
     }
 
-    let expr = parse_expr(&mut Iter::new(tokens));
+    let mut compiler = Compiler {
+        tokens: Iter::new(tokens),
+        source,
+    };
+
+    let expr = parse_expr(&mut compiler, 0.);
     println!("{}", expr.string());
 
     Ok(())
