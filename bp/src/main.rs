@@ -465,7 +465,17 @@ impl Display for Expr {
             Expr::Prefix(prefix, operand) => write!(f, "({} {})", prefix, operand,),
             Expr::Postfix(postfix, operand) => write!(f, "({} {})", postfix, operand,),
             Expr::Index(operands) => write!(f, "([ {} {})", operands.0, operands.1),
-            Expr::FunCall(operands) => write!(f, "(f {} {})", operands.0, operands.1),
+            Expr::FunCall(func, args) => {
+                write!(
+                    f,
+                    "(f {} {})",
+                    func,
+                    args.iter()
+                        .map(|e| e.to_string())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )
+            }
         }
     }
 }
@@ -476,7 +486,7 @@ enum Expr {
     Prefix(Prefix, Box<Expr>),
     Postfix(Postfix, Box<Expr>),
     Index(Box<(Expr, Expr)>),
-    FunCall(Box<(Expr, Expr)>),
+    FunCall(Box<Expr>, Vec<Expr>),
 }
 
 enum Value {
@@ -513,12 +523,12 @@ fn infix_bp(i: Infix) -> (f32, f32) {
 }
 const PREFIX_BP: f32 = 3.;
 
-fn parse_expr(c: &mut Compiler, bp: f32, end: TokenKind) -> Expr {
+fn parse_expr(c: &mut Compiler, bp: f32, end: &[TokenKind]) -> Expr {
     let t = c.tokens.next();
     let mut lhs;
 
     if t.kind == TokenKind::LPar {
-        lhs = parse_expr(c, 0., TokenKind::RPar);
+        lhs = parse_expr(c, 0., &[TokenKind::RPar]);
         c.tokens.next();
     } else if let Some(prefix) = try_parse_prefix(&t, c) {
         let operand = parse_expr(c, PREFIX_BP, end);
@@ -530,18 +540,23 @@ fn parse_expr(c: &mut Compiler, bp: f32, end: TokenKind) -> Expr {
     loop {
         // TODO: match parens at lex level
         let t = c.tokens.peek().unwrap();
-        if t.kind == end {
+        if end.iter().any(|&e| e == t.kind) {
             break;
         } else if t.kind == TokenKind::LBrak {
             c.tokens.next();
-            let rhs = parse_expr(c, 0., TokenKind::RBrak);
+            let rhs = parse_expr(c, 0., &[TokenKind::RBrak]);
             c.tokens.next();
             lhs = Expr::Index((lhs, rhs).boxed());
         } else if t.kind == TokenKind::LPar {
             c.tokens.next();
-            let rhs = parse_expr(c, 0., TokenKind::RPar);
-            c.tokens.next();
-            lhs = Expr::FunCall((lhs, rhs).boxed());
+            let mut args = vec![];
+            loop {
+                args.push(parse_expr(c, 0., &[TokenKind::RPar, TokenKind::Comma]));
+                if c.tokens.next().kind == TokenKind::RPar {
+                    break;
+                }
+            }
+            lhs = Expr::FunCall(lhs.boxed(), args);
         } else if let Some(postfix) = try_parse_postfix(&t, c) {
             c.tokens.next();
             lhs = Expr::Postfix(postfix, lhs.boxed());
@@ -579,7 +594,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         source,
     };
 
-    let expr = parse_expr(&mut compiler, 0., TokenKind::Eof);
+    let expr = parse_expr(&mut compiler, 0., &[TokenKind::Eof]);
     println!("{}", expr);
 
     Ok(())

@@ -8,7 +8,7 @@ fn test_parse_expr() {
             tokens: Iter::new(tokens),
             source: input.to_owned(),
         };
-        let expr = parse_expr(&mut c, 0., TokenKind::Eof);
+        let expr = parse_expr(&mut c, 0., &[TokenKind::Eof]);
         let str = expr.to_string();
         if str != expected {
             eprintln!("parse_expr test failed!");
@@ -41,4 +41,5 @@ fn test_parse_expr() {
     test("++1[2]", "(++ ([ 1 2))");
     test("1++[2]", "([ (++ 1) 2)");
     test("1[2]++", "(++ ([ 1 2))");
+    test("1(2,3(4,5))", "(f 1 2 (f 3 4 5))")
 }
