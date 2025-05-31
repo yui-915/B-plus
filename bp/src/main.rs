@@ -1,9 +1,21 @@
 #![allow(dead_code)]
 
-use std::{borrow::Borrow, error::Error, fs::read_to_string};
+use std::{
+    borrow::Borrow,
+    error::Error,
+    fmt::{self, Display, Formatter},
+    fs::read_to_string,
+};
 
 #[cfg(test)]
 mod tests;
+
+macro_rules! diag {
+    ($token:expr, $($fmt:tt)*) => {
+        eprint!("{}", $token.loc());
+        eprintln!($($fmt)*);
+    };
+}
 
 struct Iter<T> {
     items: Vec<T>,
@@ -155,7 +167,7 @@ macro_rules! gen_token_kind {
     {
         symbols  {$( $symbol:ident  $symbol_str:literal  )*}
         keywords {$( $keyword:ident $keyword_str:literal )*}
-        other    {$( $other:ident                        )*}
+        other    {$( $other:ident   $other_str:literal   )*}
     } => {
         #[derive(PartialEq, Clone, Debug, Copy)]
         pub enum TokenKind {
@@ -163,6 +175,18 @@ macro_rules! gen_token_kind {
             $($keyword,)*
             $($other,)*
         }
+
+        impl Display for TokenKind {
+            fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+                let s = match self {
+                    $(TokenKind::$symbol => $symbol_str,)*
+                    $(TokenKind::$keyword => $keyword_str,)*
+                    $(TokenKind::$other => $other_str,)*
+                };
+                write!(f, "`{s}`")
+            }
+        }
+
         const SYMBOLS: &[(&str, TokenKind)] = &[$(
             ($symbol_str, TokenKind::$symbol),
         )*];
@@ -212,13 +236,55 @@ gen_token_kind! {
         While "while"
     }
     other {
-        Ident
-        Integer
-        // Float
-        // String
-        // Char
-        Error
-        Eof
+        Ident   "identifier"
+        Integer "integer literal"
+        // Float   "float literal"
+        // String  "string literal"
+        // Char    "character literal"
+        Error   "ERROR WTF THIS IS LEXER ERROR PLEASE REPORT"
+        Eof     "End of file"
+    }
+}
+
+macro_rules! gen_parser_helpers {
+    {
+        infix {$( $infix_token_kind:ident => $infix:ident,  )*}
+    } => {
+        #[derive(Clone, Copy, Debug, PartialEq)]
+        enum Infix {
+            $($infix,)*
+        }
+
+        impl Display for Infix {
+            fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+                let t = match self {
+                    $(Infix::$infix => TokenKind::$infix_token_kind,)*
+                };
+                write!(f, "{t}")
+            }
+        }
+
+        fn parse_infix(t: Token, _c: &mut Compiler) -> Infix {
+            match t.kind {
+                $(TokenKind::$infix_token_kind => Infix::$infix,)*
+                _ => {
+                    diag!(
+                        t,
+                        "Unexpected token `{:?}` while trying to parse infix",
+                        t.kind
+                    );
+                    panic!();
+                }
+            }
+        }
+    };
+}
+
+gen_parser_helpers! {
+    infix {
+        Plus  => Add,
+        Star  => Mul,
+        Minus => Sub,
     }
 }
 
@@ -236,13 +302,6 @@ fn is_alpha(c: char) -> bool {
 
 fn is_num(c: char) -> bool {
     c.is_ascii_digit()
-}
-
-macro_rules! diag {
-    ($token:expr, $($fmt:tt)*) => {
-        eprint!("{}", $token.loc());
-        eprintln!($($fmt)*);
-    };
 }
 
 fn imatch<T: Clone + PartialEq, I: IntoIterator<Item = T>>(i: &Iter<T>, l: I) -> bool {
@@ -330,67 +389,46 @@ fn tokenize(source: &str, input_path: &str) -> Vec<Token> {
     tokens
 }
 
-impl Value {
-    fn string(&self) -> String {
+impl Display for Value {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Value::Integer(int) => format!("{int}"),
+            Value::Integer(int) => write!(f, "{int}"),
         }
     }
 }
 
-impl Infix {
-    fn string(&self) -> String {
-        use Infix::*;
+impl Display for Prefix {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Sub => "-",
-            Add => "+",
-            Mul => "*",
-            Index => "[",
-            FunCall => "f",
+            Prefix::Negate => write!(f, "-"),
+            Prefix::Increment => write!(f, "++"),
         }
-        .to_owned()
     }
 }
 
-impl Prefix {
-    fn string(&self) -> String {
-        use Prefix::*;
+impl Display for Postfix {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Negate => "-",
-            Increment => "++",
+            Postfix::Increment => write!(f, "++"),
         }
-        .to_owned()
     }
 }
 
-impl Postfix {
-    fn string(&self) -> String {
-        use Postfix::*;
+impl Display for Expr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Increment => "++",
-        }
-        .to_owned()
-    }
-}
-
-impl Expr {
-    fn string(&self) -> String {
-        match self {
-            Expr::Atom(value) => value.string(),
-            Expr::Infix(infix, operands) => {
-                format!(
-                    "({} {} {})",
-                    infix.string(),
-                    operands.0.string(),
-                    operands.1.string()
-                )
-            }
-            Expr::Prefix(prefix, operand) => {
-                format!("({} {})", prefix.string(), operand.string(),)
-            }
-            Expr::Postfix(postfix, operand) => {
-                format!("({} {})", postfix.string(), operand.string(),)
-            }
+            Expr::Atom(value) => write!(f, "{value}"),
+            Expr::Infix(infix, operands) => write!(
+                f,
+                "({} {} {})",
+                infix.to_string().trim_matches('`'), // TODO: this is a hack
+                operands.0,
+                operands.1,
+            ),
+            Expr::Prefix(prefix, operand) => write!(f, "({} {})", prefix, operand,),
+            Expr::Postfix(postfix, operand) => write!(f, "({} {})", postfix, operand,),
+            Expr::Index(operands) => write!(f, "([ {} {})", operands.0, operands.1),
+            Expr::FunCall(operands) => write!(f, "(f {} {})", operands.0, operands.1),
         }
     }
 }
@@ -400,6 +438,8 @@ enum Expr {
     Infix(Infix, Box<(Expr, Expr)>),
     Prefix(Prefix, Box<Expr>),
     Postfix(Postfix, Box<Expr>),
+    Index(Box<(Expr, Expr)>),
+    FunCall(Box<(Expr, Expr)>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -411,15 +451,6 @@ enum Prefix {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Postfix {
     Increment,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Infix {
-    Add,
-    Sub,
-    Mul,
-    Index,
-    FunCall,
 }
 
 enum Value {
@@ -446,24 +477,6 @@ fn parse_value(t: Token, c: &mut Compiler) -> Expr {
     Expr::Atom(value)
 }
 
-fn parse_infix(t: Token, _c: &mut Compiler) -> Infix {
-    // TODO: automate using macro
-    match t.kind {
-        TokenKind::Plus => Infix::Add,
-        TokenKind::Star => Infix::Mul,
-        TokenKind::Minus => Infix::Sub,
-        _ => {
-            diag!(
-                t,
-                "Unexpected token `{:?}` while trying to parse infix",
-                t.kind
-            );
-            panic!();
-            // exit(1);
-        }
-    }
-}
-
 fn try_parse_prefix<T: Borrow<Token>>(t: T, _c: &mut Compiler) -> Option<Prefix> {
     // TODO: automate using macro
     match t.borrow().kind {
@@ -486,7 +499,6 @@ fn infix_bp(i: Infix) -> (f32, f32) {
     match i {
         Add | Sub => (1., 1.1),
         Mul => (2., 2.1),
-        Index | FunCall => unreachable!(),
     }
 }
 const PREFIX_BP: f32 = 3.;
@@ -518,14 +530,14 @@ fn parse_expr(c: &mut Compiler, bp: f32, end: TokenKind) -> Expr {
                 c.tokens.next();
                 let rhs = parse_expr(c, 0., TokenKind::RBrak);
                 c.tokens.next();
-                lhs = Expr::Infix(Infix::Index, (lhs, rhs).boxed());
+                lhs = Expr::Index((lhs, rhs).boxed());
                 continue;
             }
             TokenKind::LPar => {
                 c.tokens.next();
                 let rhs = parse_expr(c, 0., TokenKind::RPar);
                 c.tokens.next();
-                lhs = Expr::Infix(Infix::FunCall, (lhs, rhs).boxed());
+                lhs = Expr::FunCall((lhs, rhs).boxed());
                 continue;
             }
             _ if try_parse_postfix(&t, c).is_some() => {
@@ -569,7 +581,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
     let expr = parse_expr(&mut compiler, 0., TokenKind::Eof);
-    println!("{}", expr.string());
+    println!("{}", expr);
 
     Ok(())
 }
